@@ -31,19 +31,22 @@ class Config:
         try:
             import torch_xla.core.xla_model as xm
             self.device = xm.xla_device()
+            self.device_type = 'tpu'
             print("Using TPU:", self.device)
         except Exception as e:
             if torch.cuda.is_available():
                 self.device = "cuda:0"
+                self.device_type = 'cuda'
                 print("Using GPU:", self.device)
             else:
                 self.device = "cpu"
+                self.device_type = 'cpu'
                 print("Using CPU:", self.device)
 
-        self.is_half = self.device != "cpu"
+        self.is_half = self.device_type != "cpu"
         self.gpu_name = (
             torch.cuda.get_device_name(int(self.device.split(":")[-1]))
-            if self.device.startswith("cuda")
+            if self.device_type == 'cuda'
             else None
         )
         self.json_config = self.load_config_json()
@@ -119,7 +122,7 @@ class Config:
             return None
 
     def device_config(self) -> tuple:
-        if self.device.startswith("cuda"):
+        if self.device_type == 'cuda':
             self.set_cuda_config()
         elif self.has_mps():
             self.device = "mps"
