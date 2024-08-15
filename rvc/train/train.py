@@ -105,17 +105,10 @@ logging.getLogger("torch").setLevel(logging.ERROR)
 
 
 class EpochRecorder:
-    """
-    Records the time elapsed per epoch.
-    """
-
     def __init__(self):
         self.last_time = ttime()
 
     def record(self):
-        """
-        Records the elapsed time and returns a formatted string.
-        """
         now_time = ttime()
         elapsed_time = now_time - self.last_time
         self.last_time = now_time
@@ -126,17 +119,11 @@ class EpochRecorder:
 
 
 def main():
-    """
-    Main function to start the training process.
-    """
     global training_file_path, last_loss_gen_all, smoothed_loss_gen_history, loss_gen_history, loss_disc_history, smoothed_loss_disc_history, overtrain_save_epoch
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
 
     def start():
-        """
-        Starts the training process with multi-GPU support.
-        """
         children = []
         pid_file_path = os.path.join(experiment_dir, "train_pid.txt")
         with open(pid_file_path, "w") as pid_file:
@@ -163,12 +150,6 @@ def main():
             children[i].join()
 
     def load_from_json(file_path):
-        """
-        Load data from a JSON file.
-
-        Args:
-            file_path (str): The path to the JSON file.
-        """
         if os.path.exists(file_path):
             with open(file_path, "r") as f:
                 data = json.load(f)
@@ -181,12 +162,6 @@ def main():
         return [], [], [], []
 
     def continue_overtrain_detector(training_file_path):
-        """
-        Continues the overtrain detector by loading the training history from a JSON file.
-
-        Args:
-            training_file_path (str): The file path of the JSON file containing the training history.
-        """
         if overtraining_detector:
             if os.path.exists(training_file_path):
                 (
@@ -196,13 +171,20 @@ def main():
                     smoothed_loss_gen_history,
                 ) = load_from_json(training_file_path)
 
-    n_gpus = torch.cuda.device_count()
-
-    if torch.cuda.is_available() == False and torch.backends.mps.is_available() == True:
-        n_gpus = 1
-    if n_gpus < 1:
-        print("GPU not detected, reverting to CPU (not recommended)")
-        n_gpus = 1
+    # Automatic TPU/GPU/CPU detection
+    try:
+        import torch_xla.core.xla_model as xm
+        device = xm.xla_device()
+        print("Using TPU:", device)
+        n_gpus = 1  # Set n_gpus to 1 for TPU
+    except Exception as e:
+        if torch.cuda.is_available():
+            n_gpus = torch.cuda.device_count()
+        elif torch.backends.mps.is_available():
+            n_gpus = 1
+        else:
+            print("GPU not detected, reverting to CPU (not recommended)")
+            n_gpus = 1
 
     if sync_graph == True:
         print(
@@ -230,12 +212,6 @@ def main():
                 steps = int(match.group(2))
 
         def edit_config(config_file):
-            """
-            Edits the config file to synchronize graphs.
-
-            Args:
-                config_file (str): Path to the config file.
-            """
             with open(config_file, "r", encoding="utf8") as json_file:
                 config_data = json.load(json_file)
 
@@ -300,25 +276,29 @@ def run(
     custom_save_every_weights,
     config,
 ):
-    """
-    Runs the training loop on a specific GPU.
-
-    Args:
-        rank (int): Rank of the current GPU.
-        n_gpus (int): Total number of GPUs.
-    """
     global global_step
 
     if rank == 0:
         writer = SummaryWriter(log_dir=experiment_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(experiment_dir, "eval"))
 
+    # Automatic TPU/GPU/CPU detection
+    try:
+        import torch_xla.core.xla_model as xm
+        device = xm.xla_device()
+        print("Using TPU:", device)
+    except Exception as e:
+        if torch.cuda.is_available():
+            device = torch.device(f"cuda:{rank}")
+            print(f"Using GPU: cuda:{rank}")
+        else:
+            device = torch.device("cpu")
+            print("Using CPU:", device)
+
     dist.init_process_group(
         backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
     )
     torch.manual_seed(config.train.seed)
-    if torch.cuda.is_available():
-        torch.cuda.set_device(rank)
 
     # Create datasets and dataloaders
     if pitch_guidance == True:
@@ -362,14 +342,14 @@ def run(
         is_half=config.train.fp16_run,
         sr=sample_rate,
     )
-    if torch.cuda.is_available():
-        net_g = net_g.cuda(rank)
+    net_g = net_g.to(device)
+
     if version == "v1":
         net_d = MultiPeriodDiscriminator(config.model.use_spectral_norm)
     else:
         net_d = MultiPeriodDiscriminatorV2(config.model.use_spectral_norm)
-    if torch.cuda.is_available():
-        net_d = net_d.cuda(rank)
+    net_d = net_d.to(device)
+
     optim_g = torch.optim.AdamW(
         net_g.parameters(),
         config.train.learning_rate,
@@ -384,12 +364,8 @@ def run(
     )
 
     # Wrap models with DDP
-    if torch.cuda.is_available():
-        net_g = DDP(net_g, device_ids=[rank])
-        net_d = DDP(net_d, device_ids=[rank])
-    else:
-        net_g = DDP(net_g)
-        net_d = DDP(net_d)
+    net_g = DDP(net_g, device_ids=[rank] if device.type == "cuda" else None)
+    net_d = DDP(net_d, device_ids=[rank] if device.type == "cuda" else None)
 
     # Load checkpoint if available
     try:
@@ -409,28 +385,12 @@ def run(
         if pretrainG != "":
             if rank == 0:
                 print(f"Loaded pretrained (G) '{pretrainG}'")
-            if hasattr(net_g, "module"):
-                net_g.module.load_state_dict(
-                    torch.load(pretrainG, map_location="cpu")["model"]
-                )
-
-            else:
-                net_g.load_state_dict(
-                    torch.load(pretrainG, map_location="cpu")["model"]
-                )
+            net_g.module.load_state_dict(torch.load(pretrainG, map_location="cpu")["model"])
 
         if pretrainD != "":
             if rank == 0:
                 print(f"Loaded pretrained (D) '{pretrainD}'")
-            if hasattr(net_d, "module"):
-                net_d.module.load_state_dict(
-                    torch.load(pretrainD, map_location="cpu")["model"]
-                )
-
-            else:
-                net_d.load_state_dict(
-                    torch.load(pretrainD, map_location="cpu")["model"]
-                )
+            net_d.module.load_state_dict(torch.load(pretrainD, map_location="cpu")["model"])
 
     # Initialize schedulers and scaler
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
@@ -492,20 +452,6 @@ def train_and_evaluate(
     custom_save_every_weights,
     custom_total_epoch,
 ):
-    """
-    Trains and evaluates the model for one epoch.
-
-    Args:
-        rank (int): Rank of the current GPU.
-        epoch (int): Current epoch number.
-        hps (Namespace): Hyperparameters.
-        nets (list): List of models [net_g, net_d].
-        optims (list): List of optimizers [optim_g, optim_d].
-        scaler (GradScaler): Gradient scaler for mixed precision training.
-        loaders (list): List of dataloaders [train_loader, eval_loader].
-        writers (list): List of TensorBoard writers [writer, writer_eval].
-        cache (list): List to cache data in GPU memory.
-    """
     global global_step, lowest_value, loss_disc, consecutive_increases_gen, consecutive_increases_disc
 
     if epoch == 1:
@@ -552,17 +498,18 @@ def train_and_evaluate(
                         wave_lengths,
                         sid,
                     ) = info
-                if cache_data_in_gpu == True and torch.cuda.is_available():
-                    phone = phone.cuda(rank, non_blocking=True)
-                    phone_lengths = phone_lengths.cuda(rank, non_blocking=True)
-                    if pitch_guidance == True:
-                        pitch = pitch.cuda(rank, non_blocking=True)
-                        pitchf = pitchf.cuda(rank, non_blocking=True)
-                    sid = sid.cuda(rank, non_blocking=True)
-                    spec = spec.cuda(rank, non_blocking=True)
-                    spec_lengths = spec_lengths.cuda(rank, non_blocking=True)
-                    wave = wave.cuda(rank, non_blocking=True)
-                    wave_lengths = wave_lengths.cuda(rank, non_blocking=True)
+                # Automatic device placement
+                phone = phone.to(device, non_blocking=True)
+                phone_lengths = phone_lengths.to(device, non_blocking=True)
+                if pitch_guidance == True:
+                    pitch = pitch.to(device, non_blocking=True)
+                    pitchf = pitchf.to(device, non_blocking=True)
+                sid = sid.to(device, non_blocking=True)
+                spec = spec.to(device, non_blocking=True)
+                spec_lengths = spec_lengths.to(device, non_blocking=True)
+                wave = wave.to(device, non_blocking=True)
+                wave_lengths = wave_lengths.to(device, non_blocking=True)
+
                 if pitch_guidance == True:
                     cache.append(
                         (
@@ -615,17 +562,6 @@ def train_and_evaluate(
                 ) = info
             elif pitch_guidance == False:
                 phone, phone_lengths, spec, spec_lengths, wave, wave_lengths, sid = info
-            if (cache_data_in_gpu == False) and torch.cuda.is_available():
-                phone = phone.cuda(rank, non_blocking=True)
-                phone_lengths = phone_lengths.cuda(rank, non_blocking=True)
-                if pitch_guidance == True:
-                    pitch = pitch.cuda(rank, non_blocking=True)
-                    pitchf = pitchf.cuda(rank, non_blocking=True)
-                sid = sid.cuda(rank, non_blocking=True)
-                spec = spec.cuda(rank, non_blocking=True)
-                spec_lengths = spec_lengths.cuda(rank, non_blocking=True)
-                wave = wave.cuda(rank, non_blocking=True)
-                wave_lengths = wave_lengths.cuda(rank, non_blocking=True)
 
             # Forward pass
             with autocast(enabled=config.train.fp16_run):
@@ -789,10 +725,7 @@ def train_and_evaluate(
             os.path.join(experiment_dir, "D_" + checkpoint_suffix),
         )
         if rank == 0 and custom_save_every_weights == True:
-            if hasattr(net_g, "module"):
-                ckpt = net_g.module.state_dict()
-            else:
-                ckpt = net_g.state_dict()
+            ckpt = net_g.module.state_dict()
             extract_model(
                 ckpt=ckpt,
                 sr=sample_rate,
@@ -809,17 +742,6 @@ def train_and_evaluate(
             )
 
     def check_overtraining(smoothed_loss_history, threshold, epsilon=0.004):
-        """
-        Checks for overtraining based on the smoothed loss history.
-
-        Args:
-        smoothed_loss_history (list): List of smoothed losses for each epoch.
-        threshold (int): Number of consecutive epochs with insignificant changes or increases to consider overtraining.
-        epsilon (float): The maximum change considered insignificant.
-
-        Returns:
-        bool: True if overtraining is detected, False otherwise.
-        """
         if len(smoothed_loss_history) < threshold + 1:
             return False
 
@@ -834,14 +756,6 @@ def train_and_evaluate(
     def update_exponential_moving_average(
         smoothed_loss_history, new_value, smoothing=0.987
     ):
-        """
-        Updates the exponential moving average with a new value.
-
-        Args:
-        smoothed_loss_history (list): List of smoothed values.
-        new_value (float): New value to be added.
-        smoothing (float): Smoothing factor.
-        """
         if not smoothed_loss_history:
             smoothed_value = new_value
         else:
@@ -858,9 +772,6 @@ def train_and_evaluate(
         loss_gen_history,
         smoothed_loss_gen_history,
     ):
-        """
-        Save the training history to a JSON file.
-        """
         data = {
             "loss_disc_history": loss_disc_history,
             "smoothed_loss_disc_history": smoothed_loss_disc_history,
@@ -935,10 +846,7 @@ def train_and_evaluate(
             for file in old_model_files:
                 os.remove(file)
 
-            if hasattr(net_g, "module"):
-                ckpt = net_g.module.state_dict()
-            else:
-                ckpt = net_g.state_dict()
+            ckpt = net_g.module.state_dict()
 
             extract_model(
                 ckpt=ckpt,
@@ -964,9 +872,7 @@ def train_and_evaluate(
 
         if epoch > 1 and overtraining_detector == True:
             remaining_epochs_gen = overtraining_threshold - consecutive_increases_gen
-            remaining_epochs_disc = (
-                overtraining_threshold * 2
-            ) - consecutive_increases_disc
+            remaining_epochs_disc = (overtraining_threshold * 2) - consecutive_increases_disc
             print(
                 f"{model_name} | epoch={epoch} | step={global_step} | {epoch_recorder.record()} | lowest_value={lowest_value_rounded} (epoch {lowest_value['epoch']} and step {lowest_value['step']}) | Number of epochs remaining for overtraining: g/total: {remaining_epochs_gen} d/total: {remaining_epochs_disc} | smoothed_loss_gen={smoothed_value_gen:.3f} | smoothed_loss_disc={smoothed_value_disc:.3f}"
             )
@@ -999,10 +905,7 @@ def train_and_evaluate(
         if not os.path.exists(
             os.path.join(experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth")
         ):
-            if hasattr(net_g, "module"):
-                ckpt = net_g.module.state_dict()
-            else:
-                ckpt = net_g.state_dict()
+            ckpt = net_g.module.state_dict()
 
             extract_model(
                 ckpt=ckpt,
