@@ -57,9 +57,20 @@ def read_wave(wav_path: str, normalize: bool = False):
 
 
 def get_device(gpu_index):
-    """Get the appropriate device based on GPU availability."""
+    """Get the appropriate device based on GPU and TPU availability."""
     if gpu_index == "cpu":
         return "cpu"
+
+    # TPU
+    try:
+        import torch_xla.core.xla_model as xm
+        device = xm.xla_device()
+        print("Using TPU:", device)
+        return device
+    except Exception as e:
+        pass  # Continue to GPU/CPU
+
+    # GPU
     try:
         index = int(gpu_index)
         if index < torch.cuda.device_count():
@@ -68,6 +79,7 @@ def get_device(gpu_index):
             print("Invalid GPU index. Switching to CPU.")
     except ValueError:
         print("Invalid GPU index format. Switching to CPU.")
+
     return "cpu"
 
 
