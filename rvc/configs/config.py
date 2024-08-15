@@ -27,7 +27,19 @@ def singleton(cls):
 @singleton
 class Config:
     def __init__(self):
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        # Automatic TPU detection
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+            print("Using TPU:", self.device)
+        except Exception as e:
+            if torch.cuda.is_available():
+                self.device = "cuda:0"
+                print("Using GPU:", self.device)
+            else:
+                self.device = "cpu"
+                print("Using CPU:", self.device)
+
         self.is_half = self.device != "cpu"
         self.gpu_name = (
             torch.cuda.get_device_name(int(self.device.split(":")[-1]))
