@@ -725,10 +725,20 @@ class FCPE(nn.Module):
 
 class FCPEInfer:
     def __init__(self, model_path, device=None, dtype=torch.float32):
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = device
-        ckpt = torch.load(model_path, map_location=torch.device(self.device))
+        # Automatic TPU/GPU/CPU detection
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+            print("Using TPU:", self.device)
+        except Exception as e:
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+                print("Using GPU:", self.device)
+            else:
+                self.device = torch.device("cpu")
+                print("Using CPU:", self.device)
+
+        ckpt = torch.load(model_path, map_location=self.device)
         self.args = DotDict(ckpt["config"])
         self.dtype = dtype
         model = FCPE(
@@ -766,9 +776,19 @@ class Wav2Mel:
     def __init__(self, args, device=None, dtype=torch.float32):
         self.sample_rate = args.mel.sampling_rate
         self.hop_size = args.mel.hop_size
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = device
+        # Automatic TPU/GPU/CPU detection
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+            print("Using TPU:", self.device)
+        except Exception as e:
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+                print("Using GPU:", self.device)
+            else:
+                self.device = torch.device("cpu")
+                print("Using CPU:", self.device)
+
         self.dtype = dtype
         self.stft = STFT(
             args.mel.sampling_rate,
@@ -843,11 +863,23 @@ class FCPEF0Predictor(F0Predictor):
         sample_rate=44100,
         threshold=0.05,
     ):
-        self.fcpe = FCPEInfer(model_path, device=device, dtype=dtype)
+        # Automatic TPU/GPU/CPU detection
+        try:
+            import torch_xla.core.xla_model as xm
+            self.device = xm.xla_device()
+            print("Using TPU:", self.device)
+        except Exception as e:
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+                print("Using GPU:", self.device)
+            else:
+                self.device = torch.device("cpu")
+                print("Using CPU:", self.device)
+
+        self.fcpe = FCPEInfer(model_path, device=self.device, dtype=dtype)
         self.hop_length = hop_length
         self.f0_min = f0_min
         self.f0_max = f0_max
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.threshold = threshold
         self.sample_rate = sample_rate
         self.dtype = dtype
