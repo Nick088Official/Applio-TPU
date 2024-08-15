@@ -313,8 +313,17 @@ class VoiceConverter:
         """
         if sid == "" or sid == []:
             self.cleanup_model()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            try:
+                import torch_xla.core.xla_model as xm
+                # TPU cache clearing
+                xm.get_xla_client().rendezvous("clearing_tpu_cache")
+            except Exception as e:
+                if torch.cuda.is_available():
+                    # GPU cache clearing
+                    torch.cuda.empty_cache()
+                else:
+                    # No cache clearing needed for CPU
+                    pass
 
         self.load_model(weight_root)
 
@@ -329,12 +338,31 @@ class VoiceConverter:
         if self.hubert_model is not None:
             del self.net_g, self.n_spk, self.vc, self.hubert_model, self.tgt_sr
             self.hubert_model = self.net_g = self.n_spk = self.vc = self.tgt_sr = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            try:
+                import torch_xla.core.xla_model as xm
+                # TPU cache clearing
+                xm.get_xla_client().rendezvous("clearing_tpu_cache")
+            except Exception as e:
+                if torch.cuda.is_available():
+                    # GPU cache clearing
+                    torch.cuda.empty_cache()
+                else:
+                    # No cache clearing needed for CPU
+                    pass
 
         del self.net_g, self.cpt
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        try:
+            import torch_xla.core.xla_model as xm
+            # TPU cache clearing
+            xm.get_xla_client().rendezvous("clearing_tpu_cache")
+        except Exception as e:
+            if torch.cuda.is_available():
+                # GPU cache clearing
+                torch.cuda.empty_cache()
+            else:
+                # No cache clearing needed for CPU
+                pass
+                
         self.cpt = None
 
     def load_model(self, weight_root):
