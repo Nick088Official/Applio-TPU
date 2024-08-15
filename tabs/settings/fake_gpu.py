@@ -14,7 +14,7 @@ config_file = os.path.join(now_dir, "assets", "config.json")
 
 
 def gpu_available():
-    if torch.cuda.is_available() or ngpu != 0:
+    if torch.cuda.is_available() or ngpu != 0 or device==xm.xla_device():
         return True
 
 
