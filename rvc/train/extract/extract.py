@@ -282,8 +282,12 @@ def run_embedding_extraction(
 
     models, saved_cfg, _ = load_embedding(embedder_model, embedder_model_custom)
     model = models[0]
-    devices = [get_device(gpu) for gpu in (gpus.split("-") if gpus != "-" else ["cpu"])]
-
+    
+    if gpus == "tpu":
+        devices = ["tpu"] 
+    else:
+        devices = [get_device(gpu) for gpu in (gpus.split("-") if gpus != "-" else ["cpu"])]
+        
     paths = sorted([file for file in os.listdir(wav_path) if file.endswith(".wav")])
     if not paths:
         print("No audio files found. Make sure you have provided the audios correctly.")
