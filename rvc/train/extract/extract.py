@@ -223,7 +223,31 @@ def run_pitch_extraction(exp_dir, f0_method, hop_length, num_processes, gpus):
             for future in concurrent.futures.as_completed(futures):
                 future.result()
         pbar.close()
+    elif gpus == "tpu":
+      # TPU-compatible processing using pmap
+        import jax
+        import jax.numpy as jnp
 
+        @jax.jit
+        def process_file_jax(path_data):
+            feature_input = FeatureInput(device="tpu")  # Assuming TPU context is set up
+            return feature_input.process_file(
+                path_data, f0_method=f0_method, hop_length=hop_length
+            )
+
+        process_file_pmap = jax.pmap(process_file_jax)  # Parallelize with pmap
+        
+        # Batch the data for pmap
+        batch_size = num_processes  # Adjust as needed
+        num_batches = len(paths) // batch_size + (len(paths) % batch_size > 0)
+
+        with tqdm.tqdm(total=len(paths), desc="Pitch Extraction") as pbar:
+            for i in range(num_batches):
+                start = i * batch_size
+                end = min((i + 1) * batch_size, len(paths))
+                batch_paths = paths[start:end]
+                batch_results = process_file_pmap(jnp.array(batch_paths))
+                pbar.update(len(batch_paths))
     else:
         feature_input = FeatureInput(device="cpu")
         with tqdm.tqdm(total=len(paths), desc="Pitch Extraction") as pbar:
@@ -282,12 +306,12 @@ def run_embedding_extraction(
 
     models, saved_cfg, _ = load_embedding(embedder_model, embedder_model_custom)
     model = models[0]
-    
+   
     if gpus == "tpu":
         devices = ["tpu"] 
     else:
         devices = [get_device(gpu) for gpu in (gpus.split("-") if gpus != "-" else ["cpu"])]
-        
+
     paths = sorted([file for file in os.listdir(wav_path) if file.endswith(".wav")])
     if not paths:
         print("No audio files found. Make sure you have provided the audios correctly.")
