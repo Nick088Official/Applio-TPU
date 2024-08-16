@@ -14,8 +14,15 @@ config_file = os.path.join(now_dir, "assets", "config.json")
 
 
 def gpu_available():
-    if torch.cuda.is_available() or ngpu != 0 or device==xm.xla_device():
+    if torch.cuda.is_available():  # Check CUDA GPU
         return True
+    try:
+        import torch_xla.core.xla_model as xm  # Check TPU
+        xm.xla_device()
+        return True
+    except:
+        pass
+    return False  # None Avaible
 
 
 def load_fake_gpu():
