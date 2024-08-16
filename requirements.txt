@@ -20,9 +20,9 @@ audio_upscaler==0.1.4
 
 # Machine learning
 omegaconf==2.0.5; sys_platform == 'darwin'
-git+https://github.com/IAHispano/fairseq; sys_platform == 'linux'
+git+https://github.com/IAHispano/fairseq ; sys_platform == 'linux'
 fairseq==0.12.2; sys_platform == 'darwin' or sys_platform == 'win32'
-numba; sys_platform == 'linux'
+numba ; sys_platform == 'linux'
 numba==0.57.0; sys_platform == 'darwin' or sys_platform == 'win32'
 torchaudio==2.1.1
 torch==2.1.1
